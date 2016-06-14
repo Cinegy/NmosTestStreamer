@@ -116,7 +116,7 @@ namespace NmosTestStreamer
             if (Extension)
             {
                 //read extension header length, and add to current header length
-                HeaderSize += (ushort)((data[HeaderSize + 2] << 8) + data[HeaderSize + 3] + 4);
+                HeaderSize += (ushort)(((data[HeaderSize + 2] << 8) + data[HeaderSize + 3] * 4) + 4);
             }
 
             Payload = new byte[data.Length - HeaderSize];

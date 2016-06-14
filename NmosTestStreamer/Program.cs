@@ -31,7 +31,7 @@ namespace NmosTestStreamer
 
         private static UdpClient _outputClient;
 
-       // private static StreamWriter _logFileStreamWriter;
+        // private static StreamWriter _logFileStreamWriter;
 
         private static string _outputAdapterAddress;
 
@@ -91,7 +91,7 @@ namespace NmosTestStreamer
                     selectedDevice = null;
                 }
 
-                ushort seqNum = 100;
+                ushort seqNum = 0;
 
                 while (true)
                 {
@@ -120,12 +120,12 @@ namespace NmosTestStreamer
             {
 
             }
-    }
+        }
 
         private static void DispatcherHandler(Packet packet)
         {
             //just count packets if payload storage is null
-            if(_bytePayloads==null)
+            if (_bytePayloads == null)
             {
                 _packetCount++;
                 return;
@@ -142,165 +142,126 @@ namespace NmosTestStreamer
 
         private static void ReadH264FromPacket(RtpPacket bufferedPacket)
         {
-
-
             try
             {
                 if (bufferedPacket.PayloadType != 97) return;
-                
-                    if (bufferedPacket.Payload[1] == 0x85) //this byte indicates start of I frame
-                    {
-                        startWriting = true;
-                    }
 
-                    if (bufferedPacket.Padding)
-                    {
-                        PrintToConsole("RTP Packet has padding... this needs to be removed - not yet implemented!!");
-                    }
+                //if (bufferedPacket.Payload[1] == 0x85) //this byte indicates start of I frame
+                //{
+                    startWriting = true;
+                //}
 
-                    if (startWriting && _bytePayloads != null)
+                if (bufferedPacket.Padding)
+                {
+                    PrintToConsole("RTP Packet has padding... this needs to be removed - not yet implemented!!");
+                }
+
+                if (startWriting && _bytePayloads != null)
+                {
+                    //FU-A style fragmentation unit data
+                    if ((bufferedPacket.Payload[0] & 0x1C) == 0x1c)
                     {
-                        if ((bufferedPacket.Payload[0] & 0x1C) == 0x1c)
+                        switch (bufferedPacket.Payload[1])
                         {
-                            switch (bufferedPacket.Payload[1])
-                            {
-                                case 0x85: //start of new I frame
-                                    PrintToConsole(
-                                        $"I-frame start - SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp}",
-                                        true);
+                            case 0x85: //start of new I frame
+                                PrintToConsole(
+                                    $"I-frame start - SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp}",
+                                    true);
 
-                                    //sps
+                                //sps
                                 //    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
                                 //    frameData = AddToArray(frameData, _spsData);
-                                    //pps
+                                //pps
                                 //    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
                                 //    frameData = AddToArray(frameData, _ppsData);
-                                    //New IDR NAL
-                                    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
-                                    frameData = AddToArray(frameData, 0x45);
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                //New IDR NAL
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
+                                frameData = AddToArray(frameData, 0x45);
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
 
-                                    break;
-                                case 0x81: //start of P / B frame
-                                    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
-                                    frameData = AddToArray(frameData, 0x41);
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                break;
+                            case 0x86:  //start of new SEI data
+                                PrintToConsole(
+                                       $"SEI data start - SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp}",
+                                       true);
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
+                                frameData = AddToArray(frameData, bufferedPacket.Payload);
 
-                                    break;
-                                case 0x05: //body of I frame
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
-                                    break;
-                                case 0x01: //body of P / B frame
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
-                                    break;
-                                case 0x41: //end of P / B frame
+                                break;
+                            case 0x81: //start of P / B frame
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
+                                frameData = AddToArray(frameData, 0x41);
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
 
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                break;
+                            case 0x05: //body of I frame
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                break;
+                            case 0x01: //body of P / B frame
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                break;
+                            case 0x06:  //body of SEI data
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
+                                frameData = AddToArray(frameData, bufferedPacket.Payload);
+                                break;
+                            case 0x41: //end of P / B frame
 
-                                    //unsafe
-                                    //{
-                                    //    fixed (byte* p = frameData)
-                                    //    {
-                                    //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
-                                    //    }
-                                    //}
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
 
-                                   // _elemFileBinaryWriter?.Write(frameData);
+                                //unsafe
+                                //{
+                                //    fixed (byte* p = frameData)
+                                //    {
+                                //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
+                                //    }
+                                //}
 
-                                    frameData = null;
+                                // _elemFileBinaryWriter?.Write(frameData);
 
-                                    break;
-                                case 0x45: //end of I frame
+                                frameData = null;
 
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                break;
+                            case 0x45: //end of I frame
+                                PrintToConsole(
+                                    $"I-frame end - SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp}",
+                                    true);
 
-                                    //unsafe
-                                    //{
-                                    //    fixed (byte* p = frameData)
-                                    //    {
-                                    //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
-                                    //    }
-                                    //}
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
 
-                                    //_elemFileBinaryWriter?.Write(frameData);
+                                //unsafe
+                                //{
+                                //    fixed (byte* p = frameData)
+                                //    {
+                                //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
+                                //    }
+                                //}
 
-                                    frameData = null;
+                                //_elemFileBinaryWriter?.Write(frameData);
 
-                                    break;
-                                default:
-                                    var printLen = 3;
+                                frameData = null;
 
-                                    if (printLen > bufferedPacket.Payload.Length)
-                                        printLen = bufferedPacket.Payload.Length;
+                                break;
+                            case 0x46: //end of SEI data
+                                PrintToConsole(
+                                       $"SEI data end - SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp}",
+                                       true);
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
 
-                                    var payloadString = BitConverter.ToString(bufferedPacket.Payload, 0, printLen);
+                                //unsafe
+                                //{
+                                //    fixed (byte* p = frameData)
+                                //    {
+                                //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
+                                //    }
+                                //}
 
-                                    PrintToConsole(
-                                        $"Unexpected indicator: 0x{bufferedPacket.Payload[1]:X}, Len: {bufferedPacket.Payload.Length}, First few bytes: {payloadString}",
-                                        true);
+                                // _elemFileBinaryWriter?.Write(frameData);
 
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+                                frameData = null;
 
-                                    break;
-                            }
-                        }
-                        else //not an FU-A packed payload
-                        {
-                            if ((bufferedPacket.Payload[0] & 0x09) == 0x09)
-                            {
-                                if (bufferedPacket.Payload.Length < 1300)
-                                {
-                                    //access unit delimiter in plain NALU payload
-                                    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01, 0x09 });
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
-                                }
-                            }
-                            else if ((bufferedPacket.Payload[0] & 0x07) == 0x07)
-                            {
-                                //SPS
-                            }
-                            else if ((bufferedPacket.Payload[0] & 0x08) == 0x08)
-                            {
-                                //PPS
-                            }
-                            else if ((bufferedPacket.Payload[0] & 0x06) == 0x06)
-                            {
-                                //SEI data
-                                if (bufferedPacket.Payload.Length < 1380)
-                                {
-                                    //access unit delimiter in plain NALU payload
-                                    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload);
-                                }
-                            }
-                            else if ((bufferedPacket.Payload[0] & 0x01) == 0x01)
-                            {
-                                //B or P frame (small payload case, total NAL in one packet
-                                if (bufferedPacket.Payload.Length < 1380)
-                                {
-                                    //access unit delimiter in plain NALU payload
-                                    frameData = null;
-
-                                    frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
-                                    frameData = AddToArray(frameData, bufferedPacket.Payload);
-
-                                    //unsafe
-                                    //{
-                                    //    fixed (byte* p = frameData)
-                                    //    {
-                                    //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
-                                    //    }
-                                    //}
-
-                                    //_elemFileBinaryWriter?.Write(frameData);
-
-                                    frameData = null;
-                                }
-                            }
-                            else
-                            {
-                                //unknown / never seen so far
-                                var printLen = 3;
+                                break;
+                            default:
+                                var printLen = 8;
 
                                 if (printLen > bufferedPacket.Payload.Length)
                                     printLen = bufferedPacket.Payload.Length;
@@ -308,12 +269,97 @@ namespace NmosTestStreamer
                                 var payloadString = BitConverter.ToString(bufferedPacket.Payload, 0, printLen);
 
                                 PrintToConsole(
-                                    $"Non FU-A payload, Length: {bufferedPacket.Payload.Length}, First few bytes: {payloadString}",
+                                    $"Unexpected indicator inside FU-A packet: 0x{bufferedPacket.Payload[1]:X}, Len: {bufferedPacket.Payload.Length}, First few bytes: {payloadString}",
                                     true);
+
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
+
+                                break;
+                        }
+                    }
+                    else if ((bufferedPacket.Payload[0] & 0x18) == 0x18)
+                    {
+                        var printLen = 8;
+
+                        if (printLen > bufferedPacket.Payload.Length)
+                            printLen = bufferedPacket.Payload.Length;
+
+                        var payloadString = BitConverter.ToString(bufferedPacket.Payload, 0, printLen);
+                        //STAP-A
+                        PrintToConsole(
+                                    $"STAP-A packet, SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp} Length: {bufferedPacket.Payload.Length}, First few bytes: {payloadString}",
+                                    true);
+                    }
+                    else //not an FU-A or STAP packed payload
+                    {
+                        if ((bufferedPacket.Payload[0] & 0x09) == 0x09)
+                        {
+                            if (bufferedPacket.Payload.Length < 1300)
+                            {
+                                //access unit delimiter in plain NALU payload
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01, 0x09 });
+                                frameData = AddToArray(frameData, bufferedPacket.Payload, 2);
                             }
+                        }
+                        else if ((bufferedPacket.Payload[0] & 0x07) == 0x07)
+                        {
+                            //SPS
+                        }
+                        else if ((bufferedPacket.Payload[0] & 0x08) == 0x08)
+                        {
+                            //PPS
+                        }
+                        else if ((bufferedPacket.Payload[0] & 0x06) == 0x06)
+                        {
+                            //SEI data
+                            if (bufferedPacket.Payload.Length < 1380)
+                            {
+                                //access unit delimiter in plain NALU payload
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
+                                frameData = AddToArray(frameData, bufferedPacket.Payload);
+                            }
+                        }
+                        else if ((bufferedPacket.Payload[0] & 0x01) == 0x01)
+                        {
+                            //B or P frame (small payload case, total NAL in one packet
+                            if (bufferedPacket.Payload.Length < 1380)
+                            {
+                                //access unit delimiter in plain NALU payload
+                                frameData = null;
+
+                                frameData = AddToArray(frameData, new byte[] { 0x0, 0x0, 0x0, 0x01 });
+                                frameData = AddToArray(frameData, bufferedPacket.Payload);
+
+                                //unsafe
+                                //{
+                                //    fixed (byte* p = frameData)
+                                //    {
+                                //        _tsWriter.ProcessData((IntPtr)p, (uint)frameData.Length);
+                                //    }
+                                //}
+
+                                //_elemFileBinaryWriter?.Write(frameData);
+
+                                frameData = null;
+                            }
+                        }
+                        else
+                        {
+                            //unknown / never seen so far
+                            var printLen = 8;
+
+                            if (printLen > bufferedPacket.Payload.Length)
+                                printLen = bufferedPacket.Payload.Length;
+
+                            var payloadString = BitConverter.ToString(bufferedPacket.Payload, 0, printLen);
+
+                            PrintToConsole(
+                                $"Non FU-A payload, SeqNum: {bufferedPacket.SequenceNumber}, LastTS: {bufferedPacket.Timestamp} Length: {bufferedPacket.Payload.Length}, First few bytes: {payloadString}",
+                                true);
                         }
                     }
                 }
+            }
             catch (Exception ex)
             {
                 PrintToConsole($@"Unhandled exception within network receiver: {ex.Message}");
