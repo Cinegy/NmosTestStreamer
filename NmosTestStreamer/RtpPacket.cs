@@ -16,8 +16,6 @@
 */
 
 using System;
-using System.Diagnostics;
-using System.IO;
 
 namespace NmosTestStreamer
 {
@@ -45,10 +43,10 @@ namespace NmosTestStreamer
             {
                 if(Payload==null)
                 {
-                    return HeaderSize + 12;
+                    return HeaderSize;
                 }
 
-                return HeaderSize + 16 + Payload.Length;
+                return HeaderSize + Payload.Length;
             }
         }
 
@@ -74,20 +72,19 @@ namespace NmosTestStreamer
             bw.Put_Bool(Extension);
             bw.Put_Bits((uint)CsrcCount, 4);
             bw.Put_Bool(Marker);
-            bw.Put_Bits((uint)PayloadType, 7);
+            bw.Put_Bits(PayloadType, 7);
             bw.Put_Bits(SequenceNumber, 16);
             bw.Put_Bits(Timestamp, 32);
             bw.Put_Bits(Ssrc, 32);
             bw.BitPos += CsrcCount * 32;
 
-            //todo: support bit serialising RTP extensions (at the moment, ignoring - very short term)
             if(Extension)
             {
-                bw.Put_Bits((uint)0xbede, 16);
-               // HeaderSize += (ushort)((data[HeaderSize + 2] << 8) + data[HeaderSize + 3] + 4);
-                bw.Put_Bits((uint)(HeaderSize - 12 - 4),16);
+                bw.Put_Bits(0xbede, 16);
+                bw.Put_Bits((uint)((HeaderSize - 12 - 4) / 4), 16);
+                //todo: support bit serialising RTP extensions (at the moment, ignoring - very short term)
+                bw.BitPos += (HeaderSize - 12 - 4) * 8;
             }
-            bw.BitPos += HeaderSize * 8;
 
             if (Payload != null && (PacketSize > (bw.BitPos / 8)))
             {
@@ -112,11 +109,11 @@ namespace NmosTestStreamer
 
             HeaderSize = 12 + ((32 * CsrcCount)/8);
 
-            //TODO: Actually find some stream with EH, and then double check the maths is all good and not off-by-one or anything
             if (Extension)
             {
                 //read extension header length, and add to current header length
                 HeaderSize += (ushort)(((data[HeaderSize + 2] << 8) + data[HeaderSize + 3] * 4) + 4);
+                //TODO: store header payloads here
             }
 
             Payload = new byte[data.Length - HeaderSize];
