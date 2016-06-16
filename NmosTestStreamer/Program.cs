@@ -34,8 +34,6 @@ namespace NmosTestStreamer
         private static int _packetCount;
         private static int _totalGrains;
         private static List<byte[]> _dataPayloads = new List<byte[]>();
-        private static bool startWriting = false;
-        private static byte[] frameData = null;
 
         static void Main(string[] args)
         {
