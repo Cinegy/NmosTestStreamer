@@ -32,6 +32,7 @@ namespace NmosTestStreamer
         private static string _outputAdapterAddress;
         private static byte[][] _bytePayloads;
         private static int _packetCount;
+        private static int _grainCount;
         private static List<byte[]> _dataPayloads = new List<byte[]>();
         private static bool startWriting = false;
         private static byte[] frameData = null;
@@ -85,22 +86,68 @@ namespace NmosTestStreamer
 
                 ushort seqNum = 0;
 
+                var currentTime = DateTime.UtcNow.TimeOfDay.TotalMilliseconds;
+                var firstpacket = new RtpPacket(_bytePayloads[0]);
+                var lastpacket = new RtpPacket(_bytePayloads[_packetCount-1]);
+
+                var timestampSpan = (lastpacket.Timestamp - firstpacket.Timestamp) / 90;
+
+                var timeBetweenGrains = timestampSpan / (_grainCount - 1);
+
+                long timestamp = firstpacket.Timestamp;
+                var firstPacketTs = firstpacket.Timestamp ;
+                var pcClockDelta = currentTime - firstPacketTs;
+                var firstFramePacketXmitTime = currentTime;
+
+                long timestampAccum = 0;
+                var loopCount = 0;
+
                 while (true)
                 {
+
                     //repeating payload loop
                     for (var i = 0; i < _packetCount; i++)
                     {
                         RtpPacket packet = new RtpPacket(_bytePayloads[i]);
+                       // packet.Timestamp = (uint)(loopCount * (timeBetweenGrains * _grainCount * 90));
+                        if (timestamp != packet.Timestamp)
+                        {
+                          
+                            //how long since we started this set?
+                            var timeSinceStart = DateTime.UtcNow.TimeOfDay.TotalMilliseconds - firstFramePacketXmitTime;
+
+                            //how long should it have been?
+                            //var diff = (int)(((packet.Timestamp - timestamp) / 90) - (timeSinceStart - timestampAccum);
+                            var diff = 40 - (int)Math.Ceiling(timeSinceStart);
+
+                        //if (timestampAccum > 0)
+                        //    {
+                        //        Console.WriteLine("wibble");
+
+                        //    }
+                            if (diff > 0)
+                            {
+                                System.Threading.Thread.Sleep(diff);
+                            }
+                            //RTP packet timestamp has changed - will be a new frame set
+                            timestamp = packet.Timestamp;
+                            firstFramePacketXmitTime = DateTime.UtcNow.TimeOfDay.TotalMilliseconds;
+                        }
+
                         packet.SequenceNumber = seqNum++;
+                        packet.Timestamp = packet.Timestamp + (uint)timestampAccum;
                         var newBuf = packet.GetPacket();
                         _outputClient.Send(newBuf, packet.PacketSize);
 
                         //todo: implement a proper timing model here - very approx AVC rate simulated here
-                        if (i % 16 == 0)
+                        if (i % 40 == 0)
                         {
                            System.Threading.Thread.Sleep(1);
                         }
                     }
+                    timestampAccum += timestampSpan;
+                    loopCount++;
+
                     Console.WriteLine($"Loop: {DateTime.Now.TimeOfDay}");
                 }
             }
@@ -122,9 +169,14 @@ namespace NmosTestStreamer
             IpV4Datagram ip = packet.Ethernet.IpV4;
             UdpDatagram udp = ip.Udp;
             var rtpPayload = new byte[udp.Payload.Length];
-
+           
             Buffer.BlockCopy(packet.Buffer, packet.Ethernet.Arp.HeaderLength + ip.HeaderLength + packet.Ethernet.HeaderLength, rtpPayload, 0, rtpPayload.Length);
 
+            var rtpPacket = new RtpPacket(rtpPayload);
+
+            //for video, marker indicates end of grain (good enough for now)
+            if (rtpPacket.Marker) _grainCount++;
+            
             _bytePayloads[_packetCount++] = rtpPayload;
         }
 
@@ -138,7 +190,7 @@ namespace NmosTestStreamer
 
             client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             client.Client.Blocking = false;
-            client.Client.SendBufferSize = 1024 * 1024 * 1024;
+            client.Client.SendBufferSize = 1024 * 256;
             client.ExclusiveAddressUse = false;
             client.Client.Bind(localEp);
 
