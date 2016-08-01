@@ -68,7 +68,7 @@ namespace NmosTestStreamer
                     {
                         // Read and dispatch packets until EOF is reached
                         communicator.ReceivePackets(0, DispatcherHandler);
-                        //communicator.Dispose();
+                        
                     }
 
                     //since we don't know the PCAP length, just read once and pre-allocate buffer; then re-read and populate buffer
@@ -81,22 +81,37 @@ namespace NmosTestStreamer
 
                     selectedDevice = null;
                 }
-
+               
                 ushort seqNum = 0;
 
                 var firstpacket = new RtpPacket(_bytePayloads[0]);
-                var lastpacket = new RtpPacket(_bytePayloads[_packetCount-1]);
+                var lastpacket = new RtpPacket(_bytePayloads[_packetCount - 1]);
                 var timestampSpan = (int)((lastpacket.Timestamp - firstpacket.Timestamp) / 90);
-                var timeBetweenGrains = timestampSpan / (_totalGrains - 1);
+
+                int timeBetweenGrains = 0;
+                _totalGrains = _totalGrains / 2;
+                if (_totalGrains > 1) { 
+                     timeBetweenGrains = timestampSpan / (_totalGrains - 1);
+                }
+                else
+                {
+                    timeBetweenGrains = timestampSpan;
+                }
+
+                if(timeBetweenGrains == 0)
+                {
+                    timeBetweenGrains = 40;
+                }
 
                 uint currentTimestamp = 0;
                 var outputStartTime = DateTime.UtcNow.TimeOfDay.TotalMilliseconds;
                 
                 var loopCount = 0;
+                var grainCount = 0;
 
                 while (true)
                 {
-                    var grainCount = 0;
+                    currentTimestamp = 0;
                     //repeating payload loop
                     for (var i = 0; i < _packetCount; i++)
                     {
@@ -127,7 +142,7 @@ namespace NmosTestStreamer
 
                     loopCount++;
 
-                    Console.WriteLine($"Loop: {DateTime.Now.TimeOfDay}");
+                    //Console.WriteLine($"Loop: {DateTime.Now.TimeOfDay}");
                 }
             }
             catch (Exception ex)
@@ -148,8 +163,11 @@ namespace NmosTestStreamer
             IpV4Datagram ip = packet.Ethernet.IpV4;
             UdpDatagram udp = ip.Udp;
             var rtpPayload = new byte[udp.Payload.Length];
-           
-            Buffer.BlockCopy(packet.Buffer, packet.Ethernet.Arp.HeaderLength + ip.HeaderLength + packet.Ethernet.HeaderLength, rtpPayload, 0, rtpPayload.Length);
+
+            var payloadLen = rtpPayload.Length;
+            var srcOffset = packet.Ethernet.Length - payloadLen;
+          
+            Buffer.BlockCopy(packet.Buffer, srcOffset, rtpPayload, 0, payloadLen);
 
             var rtpPacket = new RtpPacket(rtpPayload);
 
