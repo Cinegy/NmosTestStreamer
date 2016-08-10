@@ -20,9 +20,6 @@ using PcapDotNet.Core;
 using PcapDotNet.Packets;
 using System.Net.Sockets;
 using System.Net;
-using PcapDotNet.Packets.IpV4;
-using PcapDotNet.Packets.Transport;
-using System.Collections.Generic;
 
 namespace NmosTestStreamer
 {
@@ -33,34 +30,39 @@ namespace NmosTestStreamer
         private static byte[][] _bytePayloads;
         private static int _packetCount;
         private static int _totalGrains;
-        private static List<byte[]> _dataPayloads = new List<byte[]>();
+        private static int _msPerGrain = -1;
 
-        static void Main(string[] args)
+        private static void Main(string[] args)
         {
             try
             {
                 // Check command line
-                if (args.Length != 2)
+                if (args.Length < 2 || args.Length > 3)
                 {
-                    Console.WriteLine("usage: " + Environment.GetCommandLineArgs()[0] + " <filename> <outputadapteraddress>");
+                    Console.WriteLine("usage: " + Environment.GetCommandLineArgs()[0] + " filename outputadapteraddress [mspergrain]");
+                    Console.WriteLine("<hit enter to exit>");
                     Console.ReadLine();
                     return;
                 }
 
                 _outputAdapterAddress = args[1];
+                if (args.Length == 3)
+                {
+                    _msPerGrain = Convert.ToInt32(args[2]);
+                }
 
                 while (_packetCount == 0)
                 {
                     // Create the offline device
-                    OfflinePacketDevice selectedDevice = new OfflinePacketDevice(args[0]);
+                    var selectedDevice = new OfflinePacketDevice(args[0]);
 
                     // Create output UDP streaming client
-                    _outputClient = PrepareOutputClient("239.1.1.2", 1234);
+                    _outputClient = PrepareOutputClient("232.0.7.1", 5000);
 
                     Console.WriteLine($"Sending contained packets from {args[0]} to adapter {args[1]}");
-
+                    
                     // Open the capture file
-                    using (PacketCommunicator communicator =
+                    using (var communicator =
                         selectedDevice.Open(65536,                                  // portion of the packet to capture
                                                                                     // 65536 guarantees that the whole packet will be captured on all the link layers
                                             PacketDeviceOpenAttributes.Promiscuous, // promiscuous mode
@@ -73,13 +75,10 @@ namespace NmosTestStreamer
 
                     //since we don't know the PCAP length, just read once and pre-allocate buffer; then re-read and populate buffer
                     //lazy, inefficient - but reliable and no impact once startup complete
-                    if (_bytePayloads == null)
-                    {
-                        _bytePayloads = new byte[_packetCount][];
-                        _packetCount = 0;
-                    }
+                    if (_bytePayloads != null) continue;
 
-                    selectedDevice = null;
+                    _bytePayloads = new byte[_packetCount][];
+                    _packetCount = 0;
                 }
                
                 ushort seqNum = 0;
@@ -88,8 +87,9 @@ namespace NmosTestStreamer
                 var lastpacket = new RtpPacket(_bytePayloads[_packetCount - 1]);
                 var timestampSpan = (int)((lastpacket.Timestamp - firstpacket.Timestamp) / 90);
 
-                int timeBetweenGrains = 0;
+                int timeBetweenGrains;
                 _totalGrains = _totalGrains / 2;
+
                 if (_totalGrains > 1) { 
                      timeBetweenGrains = timestampSpan / (_totalGrains - 1);
                 }
@@ -98,12 +98,15 @@ namespace NmosTestStreamer
                     timeBetweenGrains = timestampSpan;
                 }
 
-                if(timeBetweenGrains == 0)
+                if (timeBetweenGrains == 0 && timeBetweenGrains < 0)
                 {
                     timeBetweenGrains = 40;
                 }
-
-                uint currentTimestamp = 0;
+                else
+                {
+                    timeBetweenGrains = _msPerGrain;
+                }
+                
                 var outputStartTime = DateTime.UtcNow.TimeOfDay.TotalMilliseconds;
                 
                 var loopCount = 0;
@@ -111,11 +114,11 @@ namespace NmosTestStreamer
 
                 while (true)
                 {
-                    currentTimestamp = 0;
+                    uint currentTimestamp = 0;
                     //repeating payload loop
                     for (var i = 0; i < _packetCount; i++)
                     {
-                        RtpPacket packet = new RtpPacket(_bytePayloads[i]);
+                        var packet = new RtpPacket(_bytePayloads[i]);
                         if (currentTimestamp != packet.Timestamp)
                         {
                             //RTP packet timestamp has changed - will be a new frame set
@@ -141,13 +144,14 @@ namespace NmosTestStreamer
                     }
 
                     loopCount++;
-
-                    //Console.WriteLine($"Loop: {DateTime.Now.TimeOfDay}");
+                    
                 }
             }
             catch (Exception ex)
             {
                 PrintToConsole("Exception trying to play back PCAP: " + ex.Message);
+                Console.WriteLine("<hit enter to exit>");
+                Console.ReadLine();
             }
         }
 
@@ -160,8 +164,8 @@ namespace NmosTestStreamer
                 return;
             }
 
-            IpV4Datagram ip = packet.Ethernet.IpV4;
-            UdpDatagram udp = ip.Udp;
+            var ip = packet.Ethernet.IpV4;
+            var udp = ip.Udp;
             var rtpPayload = new byte[udp.Payload.Length];
 
             var payloadLen = rtpPayload.Length;
@@ -171,8 +175,15 @@ namespace NmosTestStreamer
 
             var rtpPacket = new RtpPacket(rtpPayload);
 
-            //for video, marker indicates end of grain (good enough for now)
-            if (rtpPacket.Marker) _totalGrains++;
+            if (rtpPacket.Extension)
+            {
+                //count grains by the existence of RTP headers taking a reasonable size
+                //should count using NMOS GrainFlag start - but since the structure is in flux, it is best to use this more brutal method
+                if ((rtpPacket.HeaderSize - 12) > 50)
+                {
+                    _totalGrains++;
+                }
+            }
             
             _bytePayloads[_packetCount++] = rtpPayload;
         }
@@ -187,7 +198,7 @@ namespace NmosTestStreamer
 
             client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             client.Client.Blocking = false;
-            client.Client.SendBufferSize = 1024 * 256*8;
+            client.Client.SendBufferSize = 1024 * 256 * 8;  //quite large buffer, since at uncompressed rates it can get full (and this is jsut a debug tool anyway)
             client.ExclusiveAddressUse = false;
             client.Client.Bind(localEp);
 
@@ -197,20 +208,8 @@ namespace NmosTestStreamer
             return client;
         }
         
-        private static void PrintToConsole(string message, bool verbose = false)
+        private static void PrintToConsole(string message)
         {
-            //if (_logFileStreamWriter != null && _logFileStreamWriter.BaseStream.CanWrite)
-            //{
-            //    _logFileStreamWriter.WriteLine("{0}\r\n------\r\n{1}", DateTime.Now.ToString("HH:mm:ss"), message);
-            //    _logFileStreamWriter.Flush();
-            //}
-
-            //if (_options.Quiet)
-            //    return;
-
-            //if ((!_options.Verbose) && verbose)
-            //    return;
-
             Console.WriteLine(message);
         }
 

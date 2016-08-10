@@ -27,6 +27,7 @@ namespace NmosTestStreamer
         public short Version;
         public bool Padding;
         public bool Extension;
+        public int ExtensionLength;
         public short CsrcCount;
         public bool Marker;
         public byte PayloadType;
@@ -34,6 +35,8 @@ namespace NmosTestStreamer
         public uint Timestamp;
         public uint Ssrc;
         public byte[] Payload;
+        public byte[] ExtensionHeaderPayload;
+        public ushort ExtensionSize;
 
         public int HeaderSize { get; private set; }
 
@@ -78,12 +81,21 @@ namespace NmosTestStreamer
             bw.Put_Bits(Ssrc, 32);
             bw.BitPos += CsrcCount * 32;
 
-            if(Extension)
+            if (Extension)
             {
+                /* Commented once headers were scaped into payload
                 bw.Put_Bits(0xbede, 16);
                 bw.Put_Bits((uint)((HeaderSize - 12 - 4) / 4), 16);
+                
                 //todo: support bit serialising RTP extensions (at the moment, ignoring - very short term)
                 bw.BitPos += (HeaderSize - 12 - 4) * 8;
+                */
+                if (ExtensionHeaderPayload != null && (PacketSize > (bw.BitPos/8) + ExtensionSize))
+                {
+                    Buffer.BlockCopy(ExtensionHeaderPayload, 0, buffer, (bw.BitPos/8), ExtensionHeaderPayload.Length);
+                    bw.BitPos += (ExtensionSize) * 8;
+                }
+
             }
 
             if (Payload != null && (PacketSize > (bw.BitPos / 8)))
@@ -111,9 +123,11 @@ namespace NmosTestStreamer
 
             if (Extension)
             {
-                //read extension header length, and add to current header length
-                HeaderSize += (ushort)(((data[HeaderSize + 2] << 8) + data[HeaderSize + 3] * 4) + 4);
-                //TODO: store header payloads here
+                //read extension header length and payload, and add to current header length
+                ExtensionSize = (ushort)(((data[HeaderSize + 2] << 8) + data[HeaderSize + 3] * 4) + 4);
+                ExtensionHeaderPayload = new byte[ExtensionSize];
+                Buffer.BlockCopy(data, HeaderSize, ExtensionHeaderPayload, 0, ExtensionSize);
+                HeaderSize += ExtensionSize;
             }
 
             Payload = new byte[data.Length - HeaderSize];
